@@ -43,7 +43,7 @@ class GraphitiService:
     async def log_exchange(self, user_name: str, user_message: str, assistant_message: str) -> None:
         await self.client.add_episode(
             name="Chatbot Response",
-            episode_body=f"{user_name}: {user_message}\nSalesBot: {assistant_message}",
+            episode_body=f"{user_name}: {user_message}\nAI friend: {assistant_message}",
             source=EpisodeType.message,
             reference_time=datetime.now(timezone.utc),
             source_description="Chatbot",

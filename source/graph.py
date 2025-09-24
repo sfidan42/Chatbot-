@@ -3,7 +3,7 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, add_messages, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage
 from graphiti_core.edges import EntityEdge
 
@@ -22,9 +22,9 @@ class AgentState(TypedDict):
 
 
 class AgentRunner:
-    def __init__(self, service, model: str = "gpt-4.1-mini", temperature: float = 0.5):
+    def __init__(self, service, model: str = "deepseek-r1:7b", temperature: float = 0.5):
         self.service = service
-        self.llm = ChatOpenAI(model=model, temperature=temperature)
+        self.llm = ChatOllama(model=model, temperature=temperature)
         self.graph_builder = StateGraph(AgentState)
         self.memory = MemorySaver()
 

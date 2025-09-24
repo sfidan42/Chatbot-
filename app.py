@@ -19,7 +19,7 @@ async def _ensure_service_and_agent():
     global _service, _agent
     if _service is None:
         _service = await GraphitiService.create(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        _agent = AgentRunner(_service)
+        _agent = AgentRunner(_service, model="llama3")
     return _service, _agent
 
 
