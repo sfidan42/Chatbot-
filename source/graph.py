@@ -22,7 +22,7 @@ class AgentState(TypedDict):
 
 
 class AgentRunner:
-    def __init__(self, service, model: str = "deepseek-r1:7b", temperature: float = 0.5):
+    def __init__(self, service, model: str, temperature: float = 0.5):
         self.service = service
         self.llm = ChatOllama(model=model, temperature=temperature)
         self.graph_builder = StateGraph(AgentState)

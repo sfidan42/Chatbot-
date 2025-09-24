@@ -60,7 +60,6 @@ def build_app():
         with gr.Row():
             send = gr.Button("Send", variant="primary")
             clear = gr.Button("New Session", variant="secondary")
-            clear_all = gr.Button("Clear All Data in DB", variant="stop")
 
         user_uuid = gr.State("")
         thread_id = gr.State("")
@@ -88,20 +87,6 @@ def build_app():
             return [], uid, tid
 
         clear.click(on_clear, inputs=[user_name, system_prompt], outputs=[chatbot, user_uuid, thread_id])
-
-        clear.click(on_clear, inputs=[user_name, system_prompt], outputs=[chatbot, user_uuid, thread_id])
-
-        async def on_clear_all(name, prompt):
-            service, _ = await _ensure_service_and_agent()
-            await service.clear_all_data()
-            uid, tid = await _start_session(name, prompt)
-            return [], uid, tid
-
-        clear_all.click(
-            on_clear_all,
-            inputs=[user_name, system_prompt],
-            outputs=[chatbot, user_uuid, thread_id],
-        )
 
     return demo
 
