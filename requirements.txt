@@ -1,0 +1,5 @@
+langgraph==0.6.7
+langchain_openai==0.3.33
+graphiti_core==0.20.4
+dotenv==0.9.9
+gradio==5.47.0
