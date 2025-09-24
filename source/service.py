@@ -48,3 +48,11 @@ class GraphitiService:
             reference_time=datetime.now(timezone.utc),
             source_description="Chatbot",
         )
+
+    async def clear_all_data(self) -> None:
+        """Deletes all nodes and relationships from the graph."""
+        # This is a raw Cypher query to delete everything.
+        # The graphiti client is assumed to expose the neo4j driver.
+        if hasattr(self.client, "driver"):
+            await self.client.driver.execute_query("MATCH (n) DETACH DELETE n")
+        await self.client.build_indices_and_constraints()
