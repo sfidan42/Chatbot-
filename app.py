@@ -19,7 +19,7 @@ async def _ensure_service_and_agent():
     global _service, _agent
     if _service is None:
         _service = await GraphitiService.create(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        _agent = AgentRunner(_service, model="llama3")
+        _agent = AgentRunner(_service, model="gemma3:4b")
     return _service, _agent
 
 
@@ -37,9 +37,19 @@ async def _chat(history, user_input, user_name, system_prompt, user_uuid, thread
         "user_node_uuid": user_uuid,
         "system_prompt": system_prompt,
     }
-    result = await agent.ainvoke(state, thread_id=thread_id)
-    ai_msg = result["messages"][-1].content if "messages" in result else ""
-    return history + [(user_input, ai_msg)]
+    
+    # Create initial history entry with messages format
+    history_with_user = history + [{"role": "user", "content": user_input}]
+    yield history_with_user
+    
+    # Stream the response
+    async for partial_response in agent.astream_response(state, thread_id=thread_id):
+        # Update the last message to include assistant response
+        history_with_user = history + [
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": partial_response}
+        ]
+        yield history_with_user
 
 
 def build_app():
@@ -55,7 +65,7 @@ def build_app():
                 scale=2,
             )
 
-        chatbot = gr.Chatbot(height=420)
+        chatbot = gr.Chatbot(height=420, type='messages')
         msg = gr.Textbox(label="Message")
         with gr.Row():
             send = gr.Button("Send", variant="primary")
@@ -73,8 +83,13 @@ def build_app():
         async def on_send(message, name, prompt, uid, tid, history):
             if not uid:
                 uid, tid = await _start_session(name, prompt)
-            updated = await _chat(history, message, name, prompt, uid, tid)
-            return updated, "", uid, tid
+            
+            # Clear the input message immediately
+            yield history, "", uid, tid
+            
+            # Stream the response
+            async for updated_history in _chat(history, message, name, prompt, uid, tid):
+                yield updated_history, "", uid, tid
 
         send.click(
             on_send,

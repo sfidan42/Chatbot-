@@ -71,6 +71,50 @@ Facts about the user and their conversation so far:
             await self.service.log_exchange(user_name, last_user_msg, response.content)
 
         return {"messages": [response]}
+    
+    async def astream_response(self, state, thread_id: str):
+        """Stream the response token by token"""
+        user_name = state["user_name"]
+        user_uuid = state["user_node_uuid"]
+        system_prompt = (state.get("system_prompt") or "").strip()
+
+        last_user_msg = ""
+        for m in reversed(state["messages"]):
+            role = getattr(m, "role", getattr(m, "type", ""))
+            if role in ("user", "human"):
+                last_user_msg = getattr(m, "content", "")
+                break
+
+        facts = await self.service.search_user_facts(
+            user_uuid,
+            f"{user_name}: {last_user_msg}",
+            num_results=8,
+        )
+        facts_string = edges_to_facts_string(facts) or "No facts."
+
+        system_message = SystemMessage(
+            content=f"""{system_prompt}
+
+Facts about the user and their conversation so far:
+{facts_string}"""
+        )
+
+        messages = [system_message] + state["messages"]
+        
+        # Stream the response
+        full_response = ""
+        async for chunk in self.llm.astream(messages):
+            if hasattr(chunk, 'content') and chunk.content:
+                full_response += chunk.content
+                yield full_response
+
+        # Persist the exchange after streaming is complete
+        try:
+            import asyncio
+            asyncio.create_task(self.service.log_exchange(user_name, last_user_msg, full_response))
+        except Exception:
+            await self.service.log_exchange(user_name, last_user_msg, full_response)
+
 
     async def ainvoke(self, state, thread_id: str):
         return await self.graph.ainvoke(state, config={"configurable": {"thread_id": thread_id}})
