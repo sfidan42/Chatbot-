@@ -5,3 +5,7 @@ conda activate graphiti
 pip install -r requirements.txt
 python app.py
 ```
+
+![gradio interface](./assets/gradio.png)
+
+![neo4j example](./assets/visualisation.png)
