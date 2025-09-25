@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
+import json
+import uuid
 
 from graphiti_core import Graphiti
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EpisodeType
-from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_EPISODE_MENTIONS
 
 
 class GraphitiService:
@@ -17,9 +18,13 @@ class GraphitiService:
         return cls(client)
 
     async def get_or_create_user_uuid(self, user_name: str) -> str:
-        nl = await self.client._search(user_name, NODE_HYBRID_SEARCH_EPISODE_MENTIONS)
-        if getattr(nl, "nodes", []):
-            return nl.nodes[0].uuid
+        # Search for existing user
+        query = f"MATCH (n:Entity) WHERE n.name = '{user_name}' RETURN n LIMIT 1"
+        async with self.client.driver.session() as session:
+            result = await session.run(query)
+            records = await result.data()
+            if records:
+                return records[0]['n']['uuid']
 
         # Create a seed episode to anchor the user node
         await self.client.add_episode(
@@ -29,8 +34,119 @@ class GraphitiService:
             reference_time=datetime.now(timezone.utc),
             source_description="GradioChat",
         )
-        nl = await self.client._search(user_name, NODE_HYBRID_SEARCH_EPISODE_MENTIONS)
-        return nl.nodes[0].uuid
+        
+        # Search again for the created user
+        async with self.client.driver.session() as session:
+            result = await session.run(query)
+            records = await result.data()
+            if records:
+                return records[0]['n']['uuid']
+        return ""
+
+    async def create_agent_persona(self, name: str, surname: str, age: int, profession: str, hobbies: str, additional_info: str = "") -> str:
+        """Create an agent persona as AgentEntity and return its UUID"""
+        try:
+            full_name = f"{name} {surname}"
+            persona_uuid = f"agent_{uuid.uuid4().hex[:8]}"
+            
+            # Create AgentEntity node directly
+            query = """
+            CREATE (a:AgentEntity {
+                uuid: $uuid,
+                name: $name,
+                surname: $surname,
+                full_name: $full_name,
+                age: $age,
+                profession: $profession,
+                hobbies: $hobbies,
+                additional_info: $additional_info,
+                created_at: datetime(),
+                type: 'agent_persona'
+            })
+            RETURN a.uuid as uuid
+            """
+            
+            async with self.client.driver.session() as session:
+                result = await session.run(query, {
+                    'uuid': persona_uuid,
+                    'name': name,
+                    'surname': surname,
+                    'full_name': full_name,
+                    'age': age,
+                    'profession': profession,
+                    'hobbies': hobbies,
+                    'additional_info': additional_info
+                })
+                records = await result.data()
+                if records:
+                    return records[0]['uuid']
+            return ""
+        except Exception as e:
+            print(f"Error creating agent persona: {e}")
+            return ""
+
+    async def get_all_personas(self) -> list[dict]:
+        """Get all existing agent personas"""
+        try:
+            query = """
+            MATCH (a:AgentEntity) 
+            WHERE a.type = 'agent_persona'
+            RETURN a
+            ORDER BY a.created_at DESC
+            """
+            
+            async with self.client.driver.session() as session:
+                result = await session.run(query)
+                records = await result.data()
+                
+                personas = []
+                for record in records:
+                    node = record['a']
+                    personas.append({
+                        'uuid': node['uuid'],
+                        'name': node['name'],
+                        'surname': node['surname'],
+                        'full_name': node['full_name'],
+                        'age': str(node['age']),
+                        'profession': node['profession'],
+                        'hobbies': node['hobbies'],
+                        'additional_info': node.get('additional_info', '')
+                    })
+                
+                return personas
+        except Exception as e:
+            print(f"Error getting personas: {e}")
+            return []
+
+    async def get_persona_by_uuid(self, uuid: str) -> dict:
+        """Get persona details by UUID"""
+        try:
+            query = """
+            MATCH (a:AgentEntity) 
+            WHERE a.uuid = $uuid AND a.type = 'agent_persona'
+            RETURN a
+            """
+            
+            async with self.client.driver.session() as session:
+                result = await session.run(query, {'uuid': uuid})
+                records = await result.data()
+                
+                if records:
+                    node = records[0]['a']
+                    return {
+                        'uuid': node['uuid'],
+                        'name': node['name'],
+                        'surname': node['surname'],
+                        'full_name': node['full_name'],
+                        'age': str(node['age']),
+                        'profession': node['profession'],
+                        'hobbies': node['hobbies'],
+                        'additional_info': node.get('additional_info', '')
+                    }
+            return {}
+        except Exception as e:
+            print(f"Error getting persona: {e}")
+            return {}
 
     async def search_user_facts(self, center_uuid: str, query: str, num_results: int = 8) -> list[EntityEdge]:
         edges = await self.client.search(
@@ -40,19 +156,12 @@ class GraphitiService:
         )
         return edges
 
-    async def log_exchange(self, user_name: str, user_message: str, assistant_message: str) -> None:
+    async def log_exchange(self, user_name: str, user_message: str, assistant_message: str, ai_name: str = "AI friend") -> None:
+        # Include both user name and AI name to differentiate conversations
         await self.client.add_episode(
-            name="Chatbot Response",
-            episode_body=f"{user_name}: {user_message}\nAI friend: {assistant_message}",
+            name=f"Chat: {user_name} with {ai_name}",
+            episode_body=f"User {user_name}: {user_message}\n{ai_name}: {assistant_message}",
             source=EpisodeType.message,
             reference_time=datetime.now(timezone.utc),
-            source_description="Chatbot",
+            source_description=f"Chatbot-{ai_name}",
         )
-
-    async def clear_all_data(self) -> None:
-        """Deletes all nodes and relationships from the graph."""
-        # This is a raw Cypher query to delete everything.
-        # The graphiti client is assumed to expose the neo4j driver.
-        if hasattr(self.client, "driver"):
-            await self.client.driver.execute_query("MATCH (n) DETACH DELETE n")
-        await self.client.build_indices_and_constraints()
