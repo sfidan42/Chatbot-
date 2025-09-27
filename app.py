@@ -27,7 +27,7 @@ async def _create_agent_with_persona(persona_uuid: str):
     global _agent, _current_persona
     service = await _ensure_service()
     _current_persona = await service.get_persona_by_uuid(persona_uuid)
-    _agent = AgentRunner(service, model="gemma3:4b")
+    _agent = AgentRunner(service, model="gpt-4.1")
     return _agent
 
 
@@ -54,7 +54,7 @@ async def _chat(history, user_input, user_name, system_prompt, user_uuid, thread
         "system_prompt": system_prompt,
         "ai_persona": _current_persona,
     }
-    
+
     # Create initial history entry with messages format
     history_with_user = history + [{"role": "user", "content": user_input}]
     yield history_with_user

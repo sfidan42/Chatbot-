@@ -6,6 +6,7 @@ from graphiti_core import Graphiti
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EpisodeType
 
+from source.config import AGENT_CREATOR, GET_PERSONAS, GET_PERSONA
 
 class GraphitiService:
     def __init__(self, client: Graphiti):
@@ -34,7 +35,7 @@ class GraphitiService:
             reference_time=datetime.now(timezone.utc),
             source_description="GradioChat",
         )
-        
+
         # Search again for the created user
         async with self.client.driver.session() as session:
             result = await session.run(query)
@@ -49,25 +50,8 @@ class GraphitiService:
             full_name = f"{name} {surname}"
             persona_uuid = f"agent_{uuid.uuid4().hex[:8]}"
             
-            # Create AgentEntity node directly
-            query = """
-            CREATE (a:AgentEntity {
-                uuid: $uuid,
-                name: $name,
-                surname: $surname,
-                full_name: $full_name,
-                age: $age,
-                profession: $profession,
-                hobbies: $hobbies,
-                additional_info: $additional_info,
-                created_at: datetime(),
-                type: 'agent_persona'
-            })
-            RETURN a.uuid as uuid
-            """
-            
             async with self.client.driver.session() as session:
-                result = await session.run(query, {
+                result = await session.run(AGENT_CREATOR, {
                     'uuid': persona_uuid,
                     'name': name,
                     'surname': surname,
@@ -88,15 +72,8 @@ class GraphitiService:
     async def get_all_personas(self) -> list[dict]:
         """Get all existing agent personas"""
         try:
-            query = """
-            MATCH (a:AgentEntity) 
-            WHERE a.type = 'agent_persona'
-            RETURN a
-            ORDER BY a.created_at DESC
-            """
-            
             async with self.client.driver.session() as session:
-                result = await session.run(query)
+                result = await session.run(GET_PERSONAS)
                 records = await result.data()
                 
                 personas = []
@@ -121,14 +98,9 @@ class GraphitiService:
     async def get_persona_by_uuid(self, uuid: str) -> dict:
         """Get persona details by UUID"""
         try:
-            query = """
-            MATCH (a:AgentEntity) 
-            WHERE a.uuid = $uuid AND a.type = 'agent_persona'
-            RETURN a
-            """
             
             async with self.client.driver.session() as session:
-                result = await session.run(query, {'uuid': uuid})
+                result = await session.run(GET_PERSONA, {'uuid': uuid})
                 records = await result.data()
                 
                 if records:
@@ -148,13 +120,22 @@ class GraphitiService:
             print(f"Error getting persona: {e}")
             return {}
 
-    async def search_user_facts(self, center_uuid: str, query: str, num_results: int = 8) -> list[EntityEdge]:
-        edges = await self.client.search(
+    async def retrieve_informations(self, center_uuid: str, query: str, num_results: int = 8) -> list[EntityEdge]:
+        results = await self.client.search_(
             query,
-            center_node_uuid=center_uuid,
-            num_results=num_results,
         )
-        return edges
+
+        result = "FACTS:\n"
+        for edge in results.edges:
+            result += edge.fact + "\n"
+        result += "SUMMARIES:\n"
+        for node in results.nodes:
+            result += node.summary + "\n"
+        result += "CONTENTS:\n"
+        for episode in results.episodes:
+            result += episode.content + "\n"
+
+        return result
 
     async def log_exchange(self, user_name: str, user_message: str, assistant_message: str, ai_name: str = "AI friend") -> None:
         # Include both user name and AI name to differentiate conversations

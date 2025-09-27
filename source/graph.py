@@ -3,16 +3,10 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, add_messages, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from graphiti_core.edges import EntityEdge
-
-
-def edges_to_facts_string(entities: list[EntityEdge]) -> str:
-    if not entities:
-        return ""
-    return "-" + "\n- ".join([edge.fact for edge in entities])
-
+from source.config import PERSONA_PROMPT, RESPONSE_PROMPT
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -25,7 +19,7 @@ class AgentState(TypedDict):
 class AgentRunner:
     def __init__(self, service, model: str, temperature: float = 0.5):
         self.service = service
-        self.llm = ChatOllama(model=model, temperature=temperature)
+        self.llm = ChatOpenAI(model=model, temperature=temperature) 
         self.graph_builder = StateGraph(AgentState)
         self.memory = MemorySaver()
 
@@ -43,19 +37,14 @@ class AgentRunner:
         name = persona.get('name', 'AI')
         full_name = persona.get('full_name', name)
         
-        persona_prompt = f"""
-You are {full_name}, a {persona.get('age', '')} year old {persona.get('profession', '')}.
-Your hobbies include: {persona.get('hobbies', 'various activities')}.
-{persona.get('additional_info', '')}
-
-IMPORTANT: You are {full_name}, not any other person mentioned in the conversation history.
-When responding, always remember you are {name} and the user is the person you're currently talking to.
-Do not confuse the user with other people mentioned in past conversations.
-
-Remember to stay in character and respond as {name} would.
-When asked about your name or identity, you are {full_name}.
-"""
-        return persona_prompt.strip()
+        persona_prompt = PERSONA_PROMPT.format(
+            full_name=full_name,
+            age=persona.get('age', ''),
+            profession=persona.get('profession', ''),
+            hobbies=persona.get('hobbies', 'various activities'),
+            additional_info=persona.get('additional_info', ''),
+        ).strip()
+        return persona_prompt
 
     async def chatbot(self, state: AgentState):
         user_name = state["user_name"]
@@ -65,36 +54,29 @@ When asked about your name or identity, you are {full_name}.
 
         last_user_msg = ""
         for m in reversed(state["messages"]):
-            role = getattr(m, "role", getattr(m, "type", ""))
+            role = m.get("role", m.get("type", "")) 
             if role in ("user", "human"):
-                last_user_msg = getattr(m, "content", "")
+                last_user_msg = m.get("content", "")
                 break
 
-        facts = await self.service.search_user_facts(
+
+        facts_string = await self.service.search_user_facts(
             user_uuid,
             f"{user_name}: {last_user_msg}",
             num_results=8,
         )
-        facts_string = edges_to_facts_string(facts) or "No facts."
 
-        # Build combined prompt with persona info
         persona_prompt = self._build_persona_prompt(persona)
-        combined_prompt = f"{system_prompt}\n\n{persona_prompt}" if persona_prompt else system_prompt
 
-        system_message = SystemMessage(
-            content=f"""{combined_prompt}
+        response_prompt = RESPONSE_PROMPT.format(system_prompt, persona_prompt, user_name, facts_string)
 
-Facts about the user and their conversation so far:
-{facts_string}"""
-        )
+        system_message = SystemMessage(content=response_prompt)
 
         messages = [system_message] + state["messages"]
         response = await self.llm.ainvoke(messages)
 
-        # Get AI name from persona
         ai_name = persona.get("full_name", "AI friend") if persona else "AI friend"
 
-        # Persist the exchange
         try:
             import asyncio
             asyncio.create_task(self.service.log_exchange(user_name, last_user_msg, response.content, ai_name))
@@ -104,47 +86,39 @@ Facts about the user and their conversation so far:
         return {"messages": [response]}
     
     async def astream_response(self, state, thread_id: str, ai_name: str = "AI friend"):
-        """Stream the response token by token"""
         user_name = state["user_name"]
         user_uuid = state["user_node_uuid"]
-        system_prompt = (state.get("system_prompt") or "").strip()
         persona = state.get("ai_persona", {})
+        system_prompt=(state.get("system_prompt") or "").strip()
 
         last_user_msg = ""
         for m in reversed(state["messages"]):
-            role = getattr(m, "role", getattr(m, "type", ""))
+            role = m.get("role", m.get("type", "")) 
             if role in ("user", "human"):
-                last_user_msg = getattr(m, "content", "")
+                last_user_msg = m.get("content", "")
                 break
-
+        
         # Search for facts but be more specific about the context
         persona_name = persona.get('full_name', persona.get('name', 'AI'))
-        facts = await self.service.search_user_facts(
+        persona_prompt = self._build_persona_prompt(persona)
+
+        facts_string = await self.service.retrieve_informations(
             user_uuid,
             f"Current user {user_name} talking to {persona_name}: {last_user_msg}",
             num_results=6,
         )
-        facts_string = edges_to_facts_string(facts) or "No relevant facts found."
 
-        # Build combined prompt with persona info
-        persona_prompt = self._build_persona_prompt(persona)
-        combined_prompt = f"{system_prompt}\n\n{persona_prompt}" if persona_prompt else system_prompt
-
-        system_message = SystemMessage(
-            content=f"""{combined_prompt}
-
-Current conversation context:
-- You are speaking with: {user_name}
-- You are: {persona_name}
-
-Relevant facts about your conversation with {user_name}:
-{facts_string}
-
-Remember: You are {persona_name}, and you are currently talking to {user_name}. Do not confuse them with other people from your memory."""
+        response_prompt = RESPONSE_PROMPT.format(
+            system_prompt=system_prompt,
+            persona_prompt=persona_prompt,
+            user_name=user_name,
+            facts_string=facts_string
         )
 
+        system_message = SystemMessage(content=response_prompt)
+
         messages = [system_message] + state["messages"]
-        
+
         # Stream the response
         full_response = ""
         async for chunk in self.llm.astream(messages):
