@@ -145,49 +145,59 @@ async def select_persona(persona_choice):
         error_msg = f"❌ Error selecting persona: {str(e)}"
         return error_msg, gr.update(interactive=False), gr.update(value="Error selecting agent")
 
-
 def build_app():
     with gr.Blocks(title="Graphiti Memory Chat with Agent Personas") as demo:
         gr.Markdown("# Graphiti Memory Chat with Agent Personas")
-        
-        # Persona Management Section
-        with gr.Row():
+
+        # --- Modal Container for Agent Management ---
+        agent_manager_modal = gr.Group(visible=False, elem_classes=["modal-box"])
+        with agent_manager_modal:
             with gr.Column(scale=1):
-                gr.Markdown("### Agent Management")
+                gr.Markdown("## 🎭 Agent Persona Management")
+
+                # Close Button for the Modal
+                close_modal_btn = gr.Button("✖ Close Manager", variant="secondary", elem_classes=["close-btn"])
+
                 with gr.Row():
-                    persona_dropdown = gr.Dropdown(
-                        label="Select Agent",
-                        choices=[],
-                        value=None,  # Set to None instead of empty string
-                        interactive=True,
-                        allow_custom_value=False
-                    )
-                    load_btn = gr.Button("🔄", variant="secondary", scale=0)
-                
-                select_btn = gr.Button("✅ Activate Agent", variant="primary")
-                agent_status = gr.Textbox(label="Agent Status", value="No agent selected", interactive=False)
+                    # --- Agent Selection Section (Left Column) ---
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 1. Select & Activate Agent")
+                        load_btn = gr.Button("🔄 Refresh Agents List", variant="secondary")
+                        select_btn = gr.Button("✅ Activate Agent & Start Chat", variant="primary")
+                        with gr.Column(elem_classes="scrollable-list"):
+                            persona_list = gr.Radio( 
+                                label="Select Agent",
+                                choices=[],
+                                value=None,
+                                interactive=True,
+                            )
+
+                    # --- Persona Creation Section (Right Column) ---
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 2. Create New Agent")
+                        with gr.Accordion("➕ New Agent Persona Details", open=True):
+                            create_btn = gr.Button("🎭 Create Agent", variant="primary")
+                            with gr.Row():
+                                name_input = gr.Textbox(label="Name", placeholder="e.g., Kai", scale=1)
+                                surname_input = gr.Textbox(label="Surname", placeholder="e.g., Smith", scale=1)
+                                age_input = gr.Number(label="Age", value=25, minimum=1, maximum=150, scale=0)
+
+                            profession_input = gr.Textbox(label="Profession", placeholder="e.g., Software Engineer")
+                            hobbies_input = gr.Textbox(label="Hobbies", placeholder="e.g., reading, coding, hiking")
+                            additional_input = gr.Textbox(label="Additional Info", placeholder="Any other relevant information...")
+                            create_status = gr.Markdown("")
+
                 persona_info = gr.Markdown("", visible=False)
-                
-            with gr.Column(scale=1):
-                gr.Markdown("### Create New Agent")
-                with gr.Row():
-                    name_input = gr.Textbox(label="Name", placeholder="e.g., Kai", scale=1)
-                    surname_input = gr.Textbox(label="Surname", placeholder="e.g., Smith", scale=1)
-                    age_input = gr.Number(label="Age", value=25, minimum=1, maximum=150, scale=0)
-                
-                profession_input = gr.Textbox(label="Profession", placeholder="e.g., Software Engineer")
-                hobbies_input = gr.Textbox(label="Hobbies", placeholder="e.g., reading, coding, hiking")
-                additional_input = gr.Textbox(label="Additional Info", placeholder="Any other relevant information...")
-                
-                with gr.Row():
-                    create_btn = gr.Button("🎭 Create Agent", variant="primary")
-                    create_status = gr.Markdown("")
 
         gr.Markdown("---")
-        
-        # Chat Interface Section
+
+        # --- Main Chat Interface Section ---
         gr.Markdown("## Chat Interface")
-        
+
+        with gr.Row():
+            manage_agents_btn = gr.Button("⚙ Manage Agents", variant="secondary", scale=0)
+            agent_status = gr.Textbox(label="Active Agent Status", value="No agent selected", interactive=False, scale=1)
+
         with gr.Row():
             user_name = gr.Textbox(label="Your name", value="Sadettin", scale=1)
             system_prompt = gr.Textbox(
@@ -206,22 +216,46 @@ def build_app():
         user_uuid = gr.State("")
         thread_id = gr.State("")
 
-        # Event handlers
-        load_btn.click(load_personas, outputs=[persona_dropdown])
-        
+        # --- Event Handlers for the Modal Pop-up ---
+
+        # Open Modal
+        manage_agents_btn.click(
+            lambda: gr.update(visible=True),
+            inputs=None,
+            outputs=[agent_manager_modal]
+        ).then(
+            load_personas,
+            outputs=[persona_list] # Changed from persona_dropdown
+        )
+
+        # Close Modal
+        close_modal_btn.click(
+            lambda: gr.update(visible=False),
+            inputs=None,
+            outputs=[agent_manager_modal]
+        )
+
+        # --- Event Handlers for Agent Management ---
+        load_btn.click(load_personas, outputs=[persona_list]) # Changed from persona_dropdown
+
         create_btn.click(
             create_persona,
             inputs=[name_input, surname_input, age_input, profession_input, hobbies_input, additional_input],
-            outputs=[persona_dropdown, create_status, name_input, surname_input, age_input, profession_input, hobbies_input, additional_input]
-        )
-        
-        select_btn.click(
-            select_persona,
-            inputs=[persona_dropdown],
-            outputs=[persona_info, msg, agent_status]
+            outputs=[persona_list, create_status, name_input, surname_input, age_input, profession_input, hobbies_input, additional_input] # Changed from persona_dropdown
         )
 
-        # Update send button interactivity when message input changes
+        # Selection now also closes the modal automatically
+        select_btn.click(
+            select_persona,
+            inputs=[persona_list], # Changed from persona_dropdown
+            outputs=[persona_info, msg, agent_status]
+        ).then(
+            lambda: gr.update(visible=False),
+            inputs=None,
+            outputs=[agent_manager_modal]
+        )
+
+        # Update send button interactivity
         msg.change(
             lambda msg_text, status: gr.update(interactive=bool(msg_text.strip() and "ready to chat" in status.lower())),
             inputs=[msg, agent_status],
@@ -230,19 +264,16 @@ def build_app():
 
         async def on_mount():
             uid, tid = await _start_session(user_name.value, system_prompt.value)
-            personas_update = await load_personas()
-            return {user_uuid: uid, thread_id: tid, persona_dropdown: personas_update}
+            return {user_uuid: uid, thread_id: tid}
 
-        demo.load(on_mount, inputs=None, outputs=[user_uuid, thread_id, persona_dropdown])
+        demo.load(on_mount, inputs=None, outputs=[user_uuid, thread_id])
 
         async def on_send(message, name, prompt, uid, tid, history):
             if not uid:
                 uid, tid = await _start_session(name, prompt)
-            
-            # Clear the input message immediately
+
             yield history, "", uid, tid
-            
-            # Stream the response
+
             async for updated_history in _chat(history, message, name, prompt, uid, tid):
                 yield updated_history, "", uid, tid
 
@@ -258,9 +289,7 @@ def build_app():
 
         clear.click(on_clear, inputs=[user_name, system_prompt], outputs=[chatbot, user_uuid, thread_id])
 
-    return demo
-
-
+    return demo 
 if __name__ == "__main__":
     app = build_app()
     app.queue().launch()
